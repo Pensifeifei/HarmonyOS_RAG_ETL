@@ -1,0 +1,6 @@
+playwright>=1.40
+beautifulsoup4>=4.12
+lxml>=5.0
+markdownify>=0.13
+rich>=13.0
+pyyaml>=6.0

@@ -1,0 +1,11 @@
+{
+    "categories": [
+        {
+            "name": "基础入门/学习ArkTS语言/渲染控制",
+            "urls": [
+                "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V5/arkts-rendering-control-ifelse-V5",
+                "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V5/arkts-rendering-control-foreach-V5"
+            ]
+        }
+    ]
+}
