@@ -1,11 +1,40 @@
 {
-    "categories": [
+  "sections": [
+    {
+      "name": "guide",
+      "entry_url": "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/application-dev-guide",
+      "categories": [
         {
-            "name": "基础入门/学习ArkTS语言/渲染控制",
-            "urls": [
-                "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V5/arkts-rendering-control-ifelse-V5",
-                "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V5/arkts-rendering-control-foreach-V5"
-            ]
+          "name": "基础入门",
+          "urls": [
+            "https://developer.huawei.com/consumer/cn/doc/harmonyos-guides/application-dev-guide"
+          ]
         }
-    ]
+      ]
+    },
+    {
+      "name": "api",
+      "entry_url": "https://developer.huawei.com/consumer/cn/doc/harmonyos-references/development-intro-api",
+      "categories": [
+        {
+          "name": "ArkTS API",
+          "urls": [
+            "https://developer.huawei.com/consumer/cn/doc/harmonyos-references/development-intro-api"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "best-practices",
+      "entry_url": "https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-best-practices-overview",
+      "categories": [
+        {
+          "name": "概览",
+          "urls": [
+            "https://developer.huawei.com/consumer/cn/doc/best-practices/bpta-best-practices-overview"
+          ]
+        }
+      ]
+    }
+  ]
 }

@@ -24,6 +24,9 @@
 - [x] Converter 后处理增强：正则清除残留 UI 噪声文本（`收起`/`自动换行`/`深色代码主题`/`复制`）+ 图片相对路径绝对化。
 - [x] main.py 全量运行增强：日志持久化到 `output/etl.log` + `--delay` 请求间延迟参数（默认 1 秒）。
 - [x] 验证通过：噪声从 28 处/篇降为 0。
+- [x] 三大板块支持：Discovery 和 ETL 管线扩展为多 Section 模式（guide / api / best-practices），输出按板块分目录。
+- [x] config.json 格式升级为 `sections` 结构，保留旧 `categories` 格式兼容。
+- [x] CLI 新增 `discover --all`（一键发现三大板块）和 `--section` 参数。
 
 ---
 

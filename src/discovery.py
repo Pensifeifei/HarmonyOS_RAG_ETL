@@ -3,6 +3,9 @@ Discovery — auto-discover all article URLs from the HarmonyOS sidebar tree.
 
 Uses Playwright to render the Angular SPA, recursively expand the lazy-loaded
 NG-ZORRO tree, then extract every article link with its category hierarchy.
+
+Supports discovering multiple documentation sections (guide, api,
+best-practices) via ``discover_all()``.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urljoin
 
-from playwright.async_api import async_playwright, Page
+from playwright.async_api import async_playwright, Page, Browser
 
 from src.logger import setup_logger, create_progress, console
 
@@ -226,65 +229,105 @@ def _flatten_categories(
 
 
 # ---------------------------------------------------------------------------
+# Single-section discovery
+# ---------------------------------------------------------------------------
+
+async def _discover_section(
+    entry_url: str,
+    section_name: str,
+    browser: Browser,
+    *,
+    headless: bool = True,
+) -> list[dict]:
+    """Discover all article URLs from a single section's entry page.
+
+    Args:
+        entry_url: The section's index page URL.
+        section_name: Section identifier (e.g. ``guide``, ``api``).
+        browser: A reusable Playwright browser instance.
+
+    Returns:
+        The flattened categories list for this section.
+    """
+    console.rule(f"[accent]Discovery · {section_name}[/accent]")
+    log.info("[info]Entry URL:[/info] %s", entry_url)
+
+    page = await browser.new_page()
+    try:
+        log.info("[info]Navigating to entry page…[/info]")
+        # Angular SPA 需要等待 JS 完全加载后才会渲染侧边栏
+        await page.goto(entry_url, wait_until="networkidle", timeout=60_000)
+
+        # 等待侧边栏加载（SPA 渲染 + 懒加载，headless 需要更长时间）
+        await page.wait_for_selector("#documentMenu nz-tree-node", timeout=60_000)
+        await page.wait_for_timeout(5000)
+
+        # 递归展开所有折叠节点
+        await _expand_all_nodes(page)
+
+        # 提取树结构
+        tree = await _extract_tree(page)
+    finally:
+        await page.close()
+
+    # 扁平化为 config.json 格式
+    categories = _flatten_categories(tree)
+
+    total_urls = sum(len(c["urls"]) for c in categories)
+    log.info(
+        "[success]✔ [%s] Discovered %d categories, %d URLs[/success]",
+        section_name,
+        len(categories),
+        total_urls,
+    )
+
+    return categories
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 async def discover(
     entry_url: str,
     *,
+    section_name: str = "guide",
     config_output: Path | str | None = None,
     headless: bool = True,
 ) -> list[dict]:
-    """Discover all article URLs from a HarmonyOS guide entry page.
+    """Discover all article URLs from a single HarmonyOS doc section.
 
     Args:
-        entry_url: The guide index page URL (e.g. the ``application-dev-guide-V5`` page).
+        entry_url: The section index page URL.
+        section_name: Section identifier (``guide``, ``api``, ``best-practices``).
         config_output: Path to write the generated ``config.json``.
                        Defaults to ``<project>/config/config.json``.
         headless: Whether to run the browser in headless mode.
 
     Returns:
-        The generated categories list (same structure as config.json ``categories``).
+        The generated categories list.
     """
     output_path = Path(config_output) if config_output else _DEFAULT_CONFIG_PATH
 
-    console.rule("[accent]Discovery · Auto URL Extraction[/accent]")
-    log.info("[info]Entry URL:[/info] %s", entry_url)
-
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=headless)
-        page = await browser.new_page()
-
         try:
-            log.info("[info]Navigating to entry page…[/info]")
-            await page.goto(entry_url, wait_until="domcontentloaded", timeout=30_000)
-
-            # 等待侧边栏加载（SPA 渲染 + 懒加载，headless 需要更长时间）
-            await page.wait_for_selector("#documentMenu nz-tree-node", timeout=30_000)
-            await page.wait_for_timeout(3000)
-
-            # 递归展开所有折叠节点
-            await _expand_all_nodes(page)
-
-            # 提取树结构
-            tree = await _extract_tree(page)
-
+            categories = await _discover_section(
+                entry_url, section_name, browser, headless=headless
+            )
         finally:
             await browser.close()
 
-    # 扁平化为 config.json 格式
-    categories = _flatten_categories(tree)
-
-    # 统计
-    total_urls = sum(len(c["urls"]) for c in categories)
-    log.info(
-        "[success]✔ Discovered %d categories, %d URLs total[/success]",
-        len(categories),
-        total_urls,
-    )
-
-    # 写入 config.json
-    config_data = {"categories": categories}
+    # 写入 config.json（单 section 模式）
+    config_data = {
+        "sections": [
+            {
+                "name": section_name,
+                "entry_url": entry_url,
+                "categories": categories,
+            }
+        ]
+    }
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         json.dumps(config_data, ensure_ascii=False, indent=2) + "\n",
@@ -295,15 +338,102 @@ async def discover(
     return categories
 
 
+async def discover_all(
+    section_defs: list[dict],
+    *,
+    config_output: Path | str | None = None,
+    headless: bool = True,
+) -> dict:
+    """Discover URLs for multiple documentation sections.
+
+    Args:
+        section_defs: List of ``{"name": str, "entry_url": str}`` dicts.
+        config_output: Path to write the merged ``config.json``.
+        headless: Whether to run the browser in headless mode.
+
+    Returns:
+        The full config dict with all sections.
+    """
+    output_path = Path(config_output) if config_output else _DEFAULT_CONFIG_PATH
+
+    console.rule("[accent]Discovery · Multi-Section Mode[/accent]")
+    log.info("[info]Discovering %d sections…[/info]", len(section_defs))
+
+    all_sections: list[dict] = []
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=headless)
+        try:
+            for s_def in section_defs:
+                s_name = s_def["name"]
+                s_url = s_def["entry_url"]
+
+                try:
+                    categories = await _discover_section(
+                        s_url, s_name, browser, headless=headless
+                    )
+                    all_sections.append({
+                        "name": s_name,
+                        "entry_url": s_url,
+                        "categories": categories,
+                    })
+                except Exception as exc:
+                    log.error(
+                        "[error]✘ Failed to discover section '%s': %s[/error]",
+                        s_name,
+                        exc,
+                    )
+                    # 单个 section 失败不中断其他 section 的发现
+                    continue
+        finally:
+            await browser.close()
+
+    # 统计
+    grand_total_cats = sum(len(s["categories"]) for s in all_sections)
+    grand_total_urls = sum(
+        sum(len(c["urls"]) for c in s["categories"])
+        for s in all_sections
+    )
+    console.rule("[accent]Discovery · Summary[/accent]")
+    for s in all_sections:
+        s_urls = sum(len(c["urls"]) for c in s["categories"])
+        log.info(
+            "[success]  %-20s %d categories, %d URLs[/success]",
+            s["name"],
+            len(s["categories"]),
+            s_urls,
+        )
+    log.info(
+        "[success]✔ Grand total: %d categories, %d URLs[/success]",
+        grand_total_cats,
+        grand_total_urls,
+    )
+
+    # 写入 config.json
+    config_data = {"sections": all_sections}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(config_data, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    log.info("[success]✔ Config written to[/success] %s", output_path)
+
+    return config_data
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     import sys
+    from src.config_loader import SECTION_DEFINITIONS
 
-    url = sys.argv[1] if len(sys.argv) > 1 else (
-        "https://developer.huawei.com/consumer/cn/doc/"
-        "harmonyos-guides-V5/application-dev-guide-V5"
-    )
-    asyncio.run(discover(url))
+    if len(sys.argv) > 1 and sys.argv[1] == "--all":
+        asyncio.run(discover_all(SECTION_DEFINITIONS))
+    else:
+        url = sys.argv[1] if len(sys.argv) > 1 else (
+            "https://developer.huawei.com/consumer/cn/doc/"
+            "harmonyos-guides/application-dev-guide"
+        )
+        asyncio.run(discover(url))

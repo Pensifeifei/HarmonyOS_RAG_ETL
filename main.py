@@ -3,6 +3,7 @@ main.py — ETL pipeline entry point.
 
 Orchestrates the full flow: Config → Fetch → Clean → Convert → Export.
 Supports both full-pipeline mode and discovery-only mode.
+Handles multiple documentation sections (guide, api, best-practices).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import logging
 import sys
 from pathlib import Path
 
-from src.config_loader import load_config
+from src.config_loader import load_config, SECTION_DEFINITIONS
 from src.cleaner import clean
 from src.converter import convert
 from src.exporter import export
@@ -30,14 +31,14 @@ async def run_pipeline(
     overwrite: bool = False,
     delay: float = 1.0,
 ) -> None:
-    """Run the full ETL pipeline."""
-    categories = load_config(config_path)
+    """Run the full ETL pipeline across all sections."""
+    sections = load_config(config_path)
 
-    total_urls = sum(len(c.urls) for c in categories)
+    total_urls = sum(len(c.urls) for s in sections for c in s.categories)
     console.rule("[accent]ETL Pipeline · Start[/accent]")
     log.info(
-        "[info]Pipeline config: %d categories, %d URLs, concurrency=%d[/info]",
-        len(categories),
+        "[info]Pipeline config: %d sections, %d URLs, concurrency=%d[/info]",
+        len(sections),
         total_urls,
         concurrency,
     )
@@ -62,57 +63,72 @@ async def run_pipeline(
         with create_progress() as progress:
             task = progress.add_task("Processing pages", total=total_urls)
 
-            for category in categories:
-                for url in category.urls:
-                    progress.update(task, description=f"[info]{category.name}[/info]")
+            for section in sections:
+                console.rule(
+                    f"[accent]Section · {section.name} "
+                    f"({len(section.categories)} categories)[/accent]"
+                )
 
-                    try:
-                        # --- Fetch ---
-                        html = await fetch_page(url, browser, semaphore=semaphore)
+                for category in section.categories:
+                    for url in category.urls:
+                        progress.update(
+                            task,
+                            description=(
+                                f"[info][{section.name}] {category.name}[/info]"
+                            ),
+                        )
 
-                        # --- Clean ---
-                        result = clean(html)
-                        if result is None:
-                            log.warning(
-                                "[warning]⚠ No content found, skipping %s[/warning]", url
+                        try:
+                            # --- Fetch ---
+                            html = await fetch_page(url, browser, semaphore=semaphore)
+
+                            # --- Clean ---
+                            result = clean(html)
+                            if result is None:
+                                log.warning(
+                                    "[warning]⚠ No content found, skipping %s[/warning]",
+                                    url,
+                                )
+                                stats["failed"] += 1
+                                progress.advance(task)
+                                continue
+
+                            # --- Convert ---
+                            md = convert(result.content)
+
+                            # --- Export ---
+                            file_path = export(
+                                md,
+                                title=result.title,
+                                source_url=url,
+                                section=section.name,
+                                category=category.name,
+                                output_dir=out,
+                                overwrite=overwrite,
+                            )
+
+                            # 判断是 skip 还是 success
+                            if file_path.exists() and not overwrite:
+                                stats["skipped"] += 1
+                            else:
+                                stats["success"] += 1
+
+                        except FetchError as exc:
+                            log.error("[error]✘ %s[/error]", exc)
+                            stats["failed"] += 1
+                        except Exception as exc:
+                            log.error(
+                                "[error]✘ Unexpected error for %s: %s[/error]",
+                                url,
+                                exc,
                             )
                             stats["failed"] += 1
-                            progress.advance(task)
-                            continue
 
-                        # --- Convert ---
-                        md = convert(result.content)
+                        progress.advance(task)
 
-                        # --- Export ---
-                        file_path = export(
-                            md,
-                            title=result.title,
-                            source_url=url,
-                            category=category.name,
-                            output_dir=out,
-                            overwrite=overwrite,
-                        )
-
-                        # 判断是 skip 还是 success
-                        if file_path.exists() and not overwrite:
-                            stats["skipped"] += 1
-                        else:
-                            stats["success"] += 1
-
-                    except FetchError as exc:
-                        log.error("[error]✘ %s[/error]", exc)
-                        stats["failed"] += 1
-                    except Exception as exc:
-                        log.error(
-                            "[error]✘ Unexpected error for %s: %s[/error]", url, exc
-                        )
-                        stats["failed"] += 1
-
-                    progress.advance(task)
-
-                    # 请求间延迟，避免触发反爬
-                    if delay > 0:
-                        await asyncio.sleep(delay)
+                        # 请求间延迟，避免触发反爬
+                        if delay > 0:
+                            await asyncio.sleep(delay)
 
     finally:
         await browser.close()
@@ -127,10 +143,20 @@ async def run_pipeline(
     )
 
 
-async def run_discovery(entry_url: str, config_output: str | None = None) -> None:
-    """Run URL discovery from sidebar tree."""
-    from src.discovery import discover
-    await discover(entry_url, config_output=config_output)
+async def run_discovery(
+    entry_url: str | None = None,
+    section_name: str = "guide",
+    config_output: str | None = None,
+    discover_all_flag: bool = False,
+) -> None:
+    """Run URL discovery for one or all sections."""
+    if discover_all_flag:
+        from src.discovery import discover_all
+        await discover_all(SECTION_DEFINITIONS, config_output=config_output)
+    else:
+        from src.discovery import discover
+        url = entry_url or SECTION_DEFINITIONS[0]["entry_url"]
+        await discover(url, section_name=section_name, config_output=config_output)
 
 
 def main() -> None:
@@ -145,25 +171,36 @@ def main() -> None:
 
     # --- discover ---
     p_disc = sub.add_parser("discover", help="Auto-discover URLs from sidebar tree")
-    p_disc.add_argument("entry_url", help="Guide index page URL")
     p_disc.add_argument(
-        "-o", "--output", default=None, help="Output path for config.json"
+        "entry_url", nargs="?", default=None,
+        help="Section index page URL (omit if using --all)",
+    )
+    p_disc.add_argument(
+        "--section", default="guide",
+        help="Section name (guide/api/best-practices, default: guide)",
+    )
+    p_disc.add_argument(
+        "--all", action="store_true", dest="discover_all",
+        help="Discover all three sections (guide + api + best-practices)",
+    )
+    p_disc.add_argument(
+        "-o", "--output", default=None, help="Output path for config.json",
     )
 
     # --- run ---
     p_run = sub.add_parser("run", help="Run the full ETL pipeline")
     p_run.add_argument(
-        "-c", "--config", default=None, help="Path to config.json"
+        "-c", "--config", default=None, help="Path to config.json",
     )
     p_run.add_argument(
-        "-o", "--output-dir", default=None, help="Output directory"
+        "-o", "--output-dir", default=None, help="Output directory",
     )
     p_run.add_argument(
         "--concurrency", type=int, default=CONCURRENCY_LIMIT,
         help=f"Max concurrent fetches (default: {CONCURRENCY_LIMIT})",
     )
     p_run.add_argument(
-        "--overwrite", action="store_true", help="Overwrite existing files"
+        "--overwrite", action="store_true", help="Overwrite existing files",
     )
     p_run.add_argument(
         "--delay", type=float, default=1.0,
@@ -173,7 +210,14 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "discover":
-        asyncio.run(run_discovery(args.entry_url, args.output))
+        asyncio.run(
+            run_discovery(
+                entry_url=args.entry_url,
+                section_name=args.section,
+                config_output=args.output,
+                discover_all_flag=args.discover_all,
+            )
+        )
     elif args.command == "run":
         asyncio.run(
             run_pipeline(

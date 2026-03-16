@@ -24,8 +24,8 @@ def _slug_from_url(url: str) -> str:
 
     Example
     -------
-    >>> _slug_from_url("https://…/harmonyos-guides-V5/arkts-rendering-control-ifelse-V5")
-    'arkts-rendering-control-ifelse-V5'
+    >>> _slug_from_url("https://…/harmonyos-guides/arkts-rendering-control-ifelse")
+    'arkts-rendering-control-ifelse'
     """
     # 取 URL 最后一段路径
     last_segment = url.rstrip("/").rsplit("/", maxsplit=1)[-1]
@@ -37,6 +37,7 @@ def _slug_from_url(url: str) -> str:
 def _build_frontmatter(
     title: str,
     source_url: str,
+    section: str,
     category: str,
     crawled_at: str,
 ) -> str:
@@ -44,6 +45,7 @@ def _build_frontmatter(
     meta = {
         "title": title,
         "source_url": source_url,
+        "section": section,
         "category": category,
         "crawled_at": crawled_at,
     }
@@ -57,6 +59,7 @@ def export(
     *,
     title: str,
     source_url: str,
+    section: str = "guide",
     category: str,
     output_dir: Optional[Path] = None,
     overwrite: bool = False,
@@ -67,7 +70,9 @@ def export(
         markdown: The body Markdown content.
         title: Document title (goes into frontmatter).
         source_url: Original URL of the doc page.
-        category: Category name used as subdirectory.
+        section: Section name (``guide``, ``api``, ``best-practices``).
+                 Determines the top-level output subdirectory.
+        category: Category name used as subdirectory under section.
         output_dir: Root output directory (default: ``<project>/output/``).
         overwrite: If ``False`` (default), skip files that already exist.
 
@@ -75,7 +80,8 @@ def export(
         The :class:`Path` of the written (or skipped) file.
     """
     root = output_dir or _DEFAULT_OUTPUT_DIR
-    cat_dir = root / category
+    # 按 section / category 两层分目录
+    cat_dir = root / section / category
     cat_dir.mkdir(parents=True, exist_ok=True)
 
     slug = _slug_from_url(source_url)
@@ -87,7 +93,7 @@ def export(
         return file_path
 
     crawled_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    frontmatter = _build_frontmatter(title, source_url, category, crawled_at)
+    frontmatter = _build_frontmatter(title, source_url, section, category, crawled_at)
 
     full_content = frontmatter + markdown
 
