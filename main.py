@@ -249,21 +249,13 @@ async def run_pipeline(
         await pw.stop()
 
     # ==================================================================
-    # Save remaining failures to JSON
+    # Save remaining failures as config.json-compatible format
     # ==================================================================
+    failed_path = out / "failed_urls.json"
     if failed_list:
-        failed_path = out / "failed_urls.json"
-        failed_data = [
-            {
-                "url": item.url,
-                "section": item.section_name,
-                "category": item.category_name,
-                "error": item.error,
-            }
-            for item in failed_list
-        ]
+        failed_config = _build_failed_config(failed_list)
         failed_path.write_text(
-            json.dumps(failed_data, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(failed_config, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         log.info(
@@ -271,6 +263,10 @@ async def run_pipeline(
             len(failed_list),
             failed_path,
         )
+    elif failed_path.exists():
+        # 上一次遗留的 failed_urls.json 已无用，清理掉
+        failed_path.unlink()
+        log.info("[success]✔ Previous failed_urls.json cleared (all succeeded)[/success]")
 
     # --- Summary ---
     console.rule("[accent]ETL Pipeline · Complete[/accent]")
@@ -281,7 +277,10 @@ async def run_pipeline(
     )
     if failed_list:
         console.print(
-            f"[warning]📋 Failed URLs saved to: {out / 'failed_urls.json'}[/warning]"
+            f"[warning]📋 Failed URLs saved to: {failed_path}[/warning]"
+        )
+        console.print(
+            "[warning]   Run [bold]python main.py retry[/bold] to re-process them[/warning]"
         )
 
 
@@ -303,6 +302,36 @@ async def run_discovery(
         from src.discovery import discover
         url = entry_url or SECTION_DEFINITIONS[0]["entry_url"]
         await discover(url, section_name=section_name, config_output=config_output)
+
+
+# ---------------------------------------------------------------------------
+# Failed URL config builder
+# ---------------------------------------------------------------------------
+
+def _build_failed_config(failed_list: list[FailedItem]) -> dict:
+    """Convert a flat list of FailedItems into config.json-compatible format.
+
+    Groups failures by section and category, producing the same ``sections``
+    structure that :func:`load_config` expects.  This allows re-processing
+    via ``python main.py retry`` or ``python main.py run -c output/failed_urls.json``.
+    """
+    from collections import OrderedDict
+
+    # section_name -> category_name -> [urls]
+    tree: dict[str, dict[str, list[str]]] = OrderedDict()
+    for item in failed_list:
+        cats = tree.setdefault(item.section_name, OrderedDict())
+        cats.setdefault(item.category_name, []).append(item.url)
+
+    sections = []
+    for s_name, cats in tree.items():
+        categories = [
+            {"name": c_name, "urls": urls}
+            for c_name, urls in cats.items()
+        ]
+        sections.append({"name": s_name, "categories": categories})
+
+    return {"sections": sections}
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +386,22 @@ def main() -> None:
         help="Delay in seconds between requests (default: 1.0)",
     )
 
+    # --- retry ---
+    p_retry = sub.add_parser(
+        "retry", help="Re-process failed URLs from output/failed_urls.json",
+    )
+    p_retry.add_argument(
+        "-o", "--output-dir", default=None, help="Output directory",
+    )
+    p_retry.add_argument(
+        "--concurrency", type=int, default=CONCURRENCY_LIMIT,
+        help=f"Max concurrent fetches (default: {CONCURRENCY_LIMIT})",
+    )
+    p_retry.add_argument(
+        "--delay", type=float, default=1.0,
+        help="Delay in seconds between requests (default: 1.0)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "discover":
@@ -375,6 +420,21 @@ def main() -> None:
                 output_dir=args.output_dir,
                 concurrency=args.concurrency,
                 overwrite=args.overwrite,
+                delay=args.delay,
+            )
+        )
+    elif args.command == "retry":
+        out = Path(args.output_dir) if args.output_dir else Path("output")
+        failed_config = out / "failed_urls.json"
+        if not failed_config.exists():
+            console.print("[success]\u2714 No failed_urls.json found \u2014 nothing to retry[/success]")
+            sys.exit(0)
+        asyncio.run(
+            run_pipeline(
+                config_path=str(failed_config),
+                output_dir=args.output_dir,
+                concurrency=args.concurrency,
+                overwrite=True,
                 delay=args.delay,
             )
         )
