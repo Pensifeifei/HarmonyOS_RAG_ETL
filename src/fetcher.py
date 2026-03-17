@@ -18,7 +18,7 @@ log = setup_logger("fetcher")
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
-DEFAULT_TIMEOUT_MS: int = 20_000
+DEFAULT_TIMEOUT_MS: int = 45_000
 MAX_RETRIES: int = 3
 BACKOFF_BASE: float = 1.5
 CONCURRENCY_LIMIT: int = 3
@@ -70,16 +70,20 @@ async def fetch_page(
                     url,
                 )
 
-                # 使用 networkidle 等待 Angular SPA 完成 XHR 请求
-                await page.goto(url, wait_until="networkidle", timeout=timeout_ms + 10_000)
+                # domcontentloaded 即可——Angular SPA 有持续连接，networkidle 会永久等待
+                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
 
-                # 等待 SPA 渲染完成：正文容器出现
+                # 等待 SPA 渲染完成：正文容器挂载到 DOM
+                # 使用 attached 而非 visible —— 某些页面在渲染初期
+                # 元素短暂 0 高度，visible 状态会误判超时
                 await page.wait_for_selector(
-                    _CONTENT_READY_SELECTOR, timeout=timeout_ms
+                    _CONTENT_READY_SELECTOR,
+                    state="attached",
+                    timeout=timeout_ms,
                 )
 
-                # 短暂等待，确保代码高亮等动态内容渲染完毕
-                await page.wait_for_timeout(800)
+                # 等待内容完全渲染（代码高亮、图片懒加载等）
+                await page.wait_for_timeout(1500)
 
                 html: str = await page.content()
                 log.info("[success]✔ Fetched[/success] %s", url)
