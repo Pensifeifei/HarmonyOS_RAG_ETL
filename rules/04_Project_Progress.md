@@ -27,6 +27,10 @@
 - [x] 三大板块支持：Discovery 和 ETL 管线扩展为多 Section 模式（guide / api / best-practices），输出按板块分目录。
 - [x] config.json 格式升级为 `sections` 结构，保留旧 `categories` 格式兼容。
 - [x] CLI 新增 `discover --all`（一键发现三大板块）和 `--section` 参数。
+- [x] Fetcher 速度优化：超时 30s→20s、退避基数 2.0→1.5、goto 改用 `networkidle`、extra wait 1500→800ms。
+- [x] 失败重试机制：主循环收集失败 URL → Pass 2 增大超时(45s)自动重试 → 残留失败写入 `output/failed_urls.json`。
+- [x] `failed_urls.json` 采用 `config.json` 兼容的 `sections` 格式，支持 `python main.py retry` 一键重跑。
+- [x] CLI 新增 `retry` 子命令，自动读取 `output/failed_urls.json` 并重新处理失败 URL。
 
 ---
 
@@ -39,3 +43,5 @@
 - **[2026-03-02]** - **markdownify callback 签名不兼容**：不同调用路径传参不一致 | **[解决方案]**：`convert_pre`/`convert_img` 改用 `*args, **kwargs` 签名。
 - **[2026-03-02]** - **Discovery 侧边栏展开选择器**：NG-ZORRO CSS 类名使用下划线 `_close` 而非连字符 `-close` | **[解决方案]**：修正为 `ant-tree-switcher_close`。
 - **[2026-03-02]** - **代码块前 UI 噪声残留**（28 处/篇）：`收起`/`自动换行`/`深色代码主题`/`复制` | **[解决方案]**：Cleaner 新增 `.highlight-div-header` 等 6 个噪声选择器 + Converter 后处理正则双重保险。
+- **[2026-03-16]** - **Discovery 侧边栏加载超时**：headless 模式下 `#documentMenu nz-tree-node` 30s 内未出现 | **[解决方案]**：超时增至 60s + goto 改用 `networkidle` 等待策略 + 初始等待 3s→5s + `discover_all` 单 section 失败不中断。
+- **[2026-03-17]** - **Fetcher 超时耗时过长**：每个失败 URL 浪费 ~104s（30s×3 重试 + 退避） | **[解决方案]**：超时 20s + 退避 1.5 降至 ~54s，并新增 Pass 2 自动重试机制。

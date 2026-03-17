@@ -119,7 +119,23 @@ python main.py run -c config/config.json -o output/ --concurrency 5 --delay 0.5
 python main.py run --overwrite
 ```
 
-### 4. 完整流程（从零开始）
+### 4. 重试失败的 URL
+
+ETL 管线运行后，如有页面抓取失败，会自动收集并在主循环结束后做一轮重试。仍然失败的 URL 会保存到 `output/failed_urls.json`（格式与 `config.json` 完全兼容）。
+
+之后可随时重新处理：
+
+```bash
+# 一键重跑所有失败 URL
+python main.py retry
+
+# 或者手动指定
+python main.py run -c output/failed_urls.json --overwrite
+```
+
+> 重试成功后 `failed_urls.json` 会自动清理。
+
+### 5. 完整流程（从零开始）
 
 ```bash
 # ① 安装
@@ -132,6 +148,9 @@ python main.py discover --all
 
 # ③ 全量爬取
 python main.py run
+
+# ④ 如有失败，重试
+python main.py retry
 ```
 
 ## ⚙️ ETL 流程
