@@ -18,9 +18,9 @@ log = setup_logger("fetcher")
 # ---------------------------------------------------------------------------
 # Tunables
 # ---------------------------------------------------------------------------
-DEFAULT_TIMEOUT_MS: int = 30_000
+DEFAULT_TIMEOUT_MS: int = 20_000
 MAX_RETRIES: int = 3
-BACKOFF_BASE: float = 2.0
+BACKOFF_BASE: float = 1.5
 CONCURRENCY_LIMIT: int = 3
 
 # CSS selector that signals the SPA has finished rendering doc content
@@ -70,15 +70,16 @@ async def fetch_page(
                     url,
                 )
 
-                await page.goto(url, wait_until="domcontentloaded")
+                # 使用 networkidle 等待 Angular SPA 完成 XHR 请求
+                await page.goto(url, wait_until="networkidle", timeout=timeout_ms + 10_000)
 
                 # 等待 SPA 渲染完成：正文容器出现
                 await page.wait_for_selector(
                     _CONTENT_READY_SELECTOR, timeout=timeout_ms
                 )
 
-                # 额外等待短暂时间，确保动态内容（代码高亮等）渲染
-                await page.wait_for_timeout(1500)
+                # 短暂等待，确保代码高亮等动态内容渲染完毕
+                await page.wait_for_timeout(800)
 
                 html: str = await page.content()
                 log.info("[success]✔ Fetched[/success] %s", url)
