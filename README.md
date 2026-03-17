@@ -47,7 +47,7 @@ HarmonyOS_RAG_ETL/
 
 ```bash
 # 创建虚拟环境
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 
 # 安装 Python 依赖
@@ -139,7 +139,7 @@ python main.py run -c output/failed_urls.json --overwrite
 
 ```bash
 # ① 安装
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 playwright install chromium
 
